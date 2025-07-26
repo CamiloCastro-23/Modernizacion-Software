@@ -29,7 +29,7 @@ router = APIRouter(prefix="/shop")
 
 @router.get("/ping")
 async def ping():
-    return {"message": "Pet Shop API is up and running"}
+    return {"message": "Pet Shop API is up"}
 
 @router.get("/{category}")
 async def get_products_by_category(category: str = Path(..., description="Category of pets")):
