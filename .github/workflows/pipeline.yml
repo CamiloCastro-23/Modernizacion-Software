@@ -1,0 +1,71 @@
+name: Deploy Infra + Backend + Frontend
+
+on:
+  push:
+    branches:
+    - main
+
+jobs:
+  deploy:
+    name: Full deployment
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+
+    - name: Set up AWS CLI
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.6
+
+    - name: Terraform Init & Apply
+      working-directory: IaaC
+      run: |
+        terraform init
+        terraform apply -var-file="variables_deploy.tfvars" -auto-approve
+
+    - name: Build and Push Docker image
+      working-directory: backend
+      run: |
+        docker build -t 575242150631.dkr.ecr.us-east-1.amazonaws.com/ecr-repository-modernizacion:latest . --no-cache
+        aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 575242150631.dkr.ecr.us-east-1.amazonaws.com
+        docker push 575242150631.dkr.ecr.us-east-1.amazonaws.com/ecr-repository-modernizacion:latest
+
+    - name: Update Lambda with new image
+      run: |
+        aws lambda update-function-code \
+          --function-name lambda-function-modernizacion \
+          --image-uri 575242150631.dkr.ecr.us-east-1.amazonaws.com/ecr-repository-modernizacion:latest \
+          --no-cli-pager
+
+    - name: Install Angular CLI
+      run: npm install -g @angular/cli
+
+    - name: Build Frontend
+      working-directory: frontend
+      run: |
+        npm install
+        ng build --configuration=production
+
+    - name: Sync frontend to S3
+      run: |
+        aws s3 sync frontend/dist/pet-store/browser s3://s3-bucket-modernizacion --delete
+
+    - name: Invalidate CloudFront cache
+      run: |
+        aws cloudfront create-invalidation \
+          --distribution-id E2AS7VPLNIBO8W \
+          --paths "/*"
